@@ -2,6 +2,14 @@
 
 
 [[projects]]
+  digest = "1:b4c5ba677fe2b1b97bdabc04a3bca517b73cec262d5a0a58fd45faa1c892ee17"
+  name = "github.com/360EntSecGroup-Skylar/excelize"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "dc8210d4a7d18f6425f6f18dc383b26778883715"
+  version = "v2.0.1"
+
+[[projects]]
   digest = "1:573fa46f8d413d4bc3f7cc5e86b2c43cb21559f4fb0a19d9874d228e28fdc07c"
   name = "github.com/PuerkitoBio/goquery"
   packages = ["."]
@@ -19,6 +27,14 @@
 
 [[projects]]
   branch = "master"
+  digest = "1:84bd7f8a2e0bcd53ddc33c3b47c34c1fe340c8632cbe928f7f8ae10ec6ecdd62"
+  name = "github.com/mohae/deepcopy"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "c48cc78d482608239f6c4c92a4abd87eb8761c90"
+
+[[projects]]
+  branch = "master"
   digest = "1:d7b978a787736537d0ad2f84c0e8b75b05c2febef0537198e28edf1cf2768afd"
   name = "golang.org/x/net"
   packages = [
@@ -31,6 +47,10 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  input-imports = ["github.com/PuerkitoBio/goquery"]
+  input-imports = [
+    "github.com/360EntSecGroup-Skylar/excelize",
+    "github.com/PuerkitoBio/goquery",
+    "golang.org/x/net/html",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1
