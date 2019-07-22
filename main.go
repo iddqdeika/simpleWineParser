@@ -1,31 +1,255 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
+	"github.com/360EntSecGroup-Skylar/excelize"
 	"github.com/PuerkitoBio/goquery"
 	"golang.org/x/net/html"
+	"gopkg.in/cheggaaa/pb.v1"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 func main() {
-	//itemList := getItemList()
 
-	i := &Item{Id: "1121212", Url: "https://simplewine.ru/catalog/product/chateau_d_armailhac_2011_2/"}
-	i.parse()
+	itemList, err := getItemList()
+	if err != nil {
+		panic(err)
+	}
+
+	bar := pb.StartNew(len(itemList))
+	lock := sync.Mutex{}
+	wg := sync.WaitGroup{}
+	ch := make(chan struct{}, 20)
+
+	for _, i := range itemList {
+		wg.Add(1)
+		go func(item *Item) {
+			defer wg.Done()
+			ch <- struct{}{}
+			err := item.parse()
+			lock.Lock()
+			item.Error = err
+			bar.Increment()
+			lock.Unlock()
+
+			<-ch
+		}(i)
+
+	}
+	wg.Wait()
+
+	bar.Finish()
+
+	err = writeResults(itemList)
+	if err != nil {
+		fmt.Printf("error during result writing: %v", err)
+	}
 
 }
 
-func getItemList() []*Item {
+func getItemList() ([]*Item, error) {
+	file, err := excelize.OpenFile("zakaz.xlsx")
 
-	return nil
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*Item, 0)
+	met := make(map[string]struct{})
+	var i int = 1
+	for {
+		i++
+		val, err := file.GetCellValue("Лист1", "E"+strconv.Itoa(i))
+		if err != nil {
+			return nil, err
+		}
+		if len(val) == 0 {
+			break
+		}
+		id, err := file.GetCellValue("Лист1", "A"+strconv.Itoa(i))
+		if err != nil {
+			return nil, err
+		}
+		name, err := file.GetCellValue("Лист1", "C"+strconv.Itoa(i))
+		if err != nil {
+			return nil, err
+		}
+
+		if _, ok := met[id]; !ok {
+			result = append(result, &Item{Id: id, Url: val, Name: name})
+			met[id] = struct{}{}
+		}
+	}
+
+	return result, nil
+}
+
+func writeResults(items []*Item) error {
+
+	file := excelize.NewFile()
+	t := Table{}
+	for _, i := range items {
+		if i.Error == nil {
+			for k, v := range i.Rates {
+				t.AddRow()
+				t.SetCellValue("id", i.Id)
+				t.SetCellValue("param", k)
+				t.SetCellValue("value", strconv.Itoa(v))
+				t.SetCellValue("name", i.Name)
+
+			}
+
+			for k, v := range i.Params {
+				t.AddRow()
+				t.SetCellValue("id", i.Id)
+				t.SetCellValue("param", k)
+				t.SetCellValue("value", v)
+				t.SetCellValue("name", i.Name)
+			}
+
+			for k, v := range i.Descriptions {
+				t.AddRow()
+				t.SetCellValue("id", i.Id)
+				t.SetCellValue("param", k)
+				t.SetCellValue("value", v)
+				t.SetCellValue("name", i.Name)
+			}
+
+			for n, v := range i.Facts {
+				t.AddRow()
+				t.SetCellValue("id", i.Id)
+				t.SetCellValue("param", "fact "+strconv.Itoa(n))
+				t.SetCellValue("value", v)
+				t.SetCellValue("name", i.Name)
+			}
+		}
+	}
+
+	writeTableToXlsx(file, "sheet1", t)
+
+	err := file.SaveAs("test.xlsx")
+
+	return err
+}
+
+//write Table object content to given xlsx file into sheet with given name
+func writeTableToXlsx(xlsx *excelize.File, sheetname string, table Table) {
+	fmt.Println("\t" + "writing sheet \"" + sheetname + "\"...")
+	xlsx.NewSheet(sheetname)
+	for k, v := range table.Columns {
+		columnname := getColumnName(v)
+		xlsx.SetCellValue(sheetname, columnname+"1", k)
+	}
+	var i int
+
+	bar := pb.StartNew(len(table.Rows))
+	for k, v := range table.Rows {
+		i++
+		bar.Increment()
+		rowname := strconv.Itoa(k + 2)
+
+		//xlsx.SetSheetRow(sheetname, "A" + rowname,&sl)
+		for kk, vv := range v.Cells {
+			columnname := getColumnName(kk)
+			xlsx.SetCellValue(sheetname, columnname+rowname, vv)
+		}
+
+	}
+	bar.Finish()
+}
+
+//write Table object content to given xlsx file into sheet with given name
+func writeTableToCsv(filename string, table Table) {
+	fmt.Println("\t" + "writing file \"" + filename + "\"...")
+
+	file, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, os.ModeAppend)
+	if err != nil {
+		file, err = os.Create(filename)
+	}
+	file.Close()
+
+	fileHandle, _ := os.OpenFile(filename, os.O_APPEND, 0666)
+	writer := bufio.NewWriter(fileHandle)
+	defer fileHandle.Close()
+
+	maxcol := 0
+	colMap := make(map[int]string)
+	for colName, colNum := range table.Columns {
+		colMap[colNum] = colName
+		if maxcol < colNum {
+			maxcol = colNum
+		}
+	}
+	data := ""
+	for i := 0; i < maxcol; i++ {
+		data += colMap[i] + "\t"
+	}
+	data += "\r\n"
+	fmt.Fprint(writer, data)
+
+	bar := pb.StartNew(len(table.Rows))
+	for _, row := range table.Rows {
+		maxcol := 0
+		for _, colNum := range table.Columns {
+			if _, ok := row.Cells[colNum]; ok {
+				if maxcol < colNum {
+					maxcol = colNum
+				}
+			}
+		}
+		data := ""
+		for i := 0; i < maxcol; i++ {
+			data += row.Cells[i] + "\t"
+		}
+		data += "\r\n"
+		fmt.Fprint(writer, data)
+		//file.Sync()
+		bar.Increment()
+	}
+	bar.Finish()
+}
+
+//function to get column name by column number. supports up to 17526 columns
+func getColumnName(v int) string {
+	var columnname string
+	if v <= 17526 {
+		alfabet := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"}
+		columnnum := v
+		if columnnum >= len(alfabet) {
+			if columnnum >= len(alfabet)*len(alfabet) {
+				first := (columnnum - (columnnum % (len(alfabet) * len(alfabet)))) / (len(alfabet) * len(alfabet))
+				last := (columnnum - first) % len(alfabet)
+				mid := (columnnum - (first * len(alfabet) * len(alfabet)) - last) / len(alfabet)
+				columnname = alfabet[first] + alfabet[mid] + alfabet[last]
+			} else {
+				last := alfabet[columnnum%len(alfabet)]
+				first := alfabet[columnnum/len(alfabet)-1]
+				columnname = first + last
+			}
+		} else {
+			first := alfabet[columnnum]
+			columnname = first
+		}
+	} else {
+		columnname = getColumnName(17526)
+	}
+	return columnname
 }
 
 type Item struct {
-	Id  string
-	Url string
+	Id    string
+	Ready bool
+	Error error
+	Name  string
+	Url   string
 
 	body []byte
 
@@ -41,10 +265,15 @@ type Item struct {
 }
 
 func (i *Item) parse() error {
-	err := i.downloadBody()
-	if err != nil {
-		return err
+	for {
+		err := i.downloadBody()
+		if err != nil {
+			return err
+		} else {
+			break
+		}
 	}
+
 	node, err := html.Parse(bytes.NewReader(i.body))
 	if err != nil {
 		return err
@@ -79,6 +308,11 @@ func (i *Item) downloadBody() error {
 	if err != nil {
 		return err
 	}
+
+	if resp.Request.URL.String() != i.Url {
+		return errors.New("redirect")
+	}
+
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return err
@@ -89,17 +323,28 @@ func (i *Item) downloadBody() error {
 }
 
 func (i *Item) parseFacts(document *goquery.Document) error {
-	sel := document.Find(".product-facts__link")
+	sel := document.Find(".product-facts__value")
 	sel.Each(i.eachFact)
 	return nil
 }
 
 func (i *Item) eachFact(n int, selection *goquery.Selection) {
-	data := selection.Nodes[0].FirstChild.Data
+	sel := selection.Find(".product-facts__link")
+
+	result := ""
+
+	sel.Each(func(n int, selection *goquery.Selection) {
+		data := selection.Nodes[0].FirstChild.Data
+		if len(result) > 0 {
+			result += ","
+		}
+		result += san(data)
+	})
+
 	if i.Facts == nil {
 		i.Facts = make([]string, 0)
 	}
-	i.Facts = append(i.Facts, san(data))
+	i.Facts = append(i.Facts, result)
 }
 
 func (i *Item) parseDescriptions(document *goquery.Document) error {
