@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
 	"github.com/360EntSecGroup-Skylar/excelize"
 	"github.com/PuerkitoBio/goquery"
@@ -56,7 +55,7 @@ func main() {
 }
 
 func getItemList() ([]*Item, error) {
-	file, err := excelize.OpenFile("zakaz.xlsx")
+	file, err := excelize.OpenFile("zakaz1.xlsx")
 
 	if err != nil {
 		return nil, err
@@ -309,9 +308,10 @@ func (i *Item) downloadBody() error {
 		return err
 	}
 
-	if resp.Request.URL.String() != i.Url {
-		return errors.New("redirect")
-	}
+	//if resp.Request.URL.String() != i.Url {
+	//	fmt.Printf("%v\t%v\r\n", i.Url, resp.Request.URL.String())
+	//	return errors.New("redirect")
+	//}
 
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
